@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crypto Price Tracker</title>
+<style>
+  :root{--bg:#fff;--fg:#111;--muted:#666;--card:#f9fafb;--border:#e5e7eb}
+  body{font-family:system-ui,Arial,sans-serif;background:var(--bg);color:var(--fg);
+       max-width:900px;margin:40px auto;padding:0 16px}
+  h1{margin:0 0 8px}
+  .lead{margin:0 0 18px;color:var(--muted)}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  input,button{padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fff}
+  button{cursor:pointer}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px}
+  .sym{font-weight:600}
+  .price{font-size:1.4rem;margin:6px 0}
+  .change.up{color:#0a7f2e} .change.down{color:#b00020}
+  .footer{margin-top:14px;color:var(--muted);font-size:.92rem}
+  .error{color:#b00020}
+</style>
+</head>
+<body>
+  <h1>Crypto Price Tracker</h1>
+  <p class="lead">Live prices from CoinGecko. Auto-refresh every 30s. Add your own token by its CoinGecko ID.</p>
+
+  <div class="controls">
+    <button id="refreshBtn">Refresh now</button>
+    <label>Auto-refresh:
+      <select id="intervalSel">
+        <option value="30">30s</option>
+        <option value="60">60s</option>
+        <option value="0">Off</option>
+      </select>
+    </label>
+    <input id="customId" type="text" placeholder="Add token by ID (e.g. chainlink)">
+    <button id="addBtn">Add</button>
+  </div>
+
+  <div id="cards" class="grid"></div>
+  <div id="msg" class="footer"></div>
+
+<script>
+const DEFAULT_IDS = ["bitcoin","ethereum","solana","tether"]; // BTC, ETH, SOL, USDT
+const NAME_MAP = {bitcoin:"Bitcoin (BTC)", ethereum:"Ethereum (ETH)", solana:"Solana (SOL)", tether:"Tether (USDT)"};
+
+let tracked = new Set(DEFAULT_IDS);
+let timer = null;
+
+function apiUrl(ids){
+  const list = Array.from(ids).join(",");
+  return `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(list)}&vs_currencies=usd&include_24hr_change=true&precision=6`;
+}
+
+function fmt(n){ return Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:6}); }
+
+function renderSkeleton(){
+  const cards = document.getElementById("cards");
+  cards.innerHTML = Array.from(tracked).map(id => `
+    <div class="card" id="card-${id}">
+      <div class="sym">${NAME_MAP[id] || id}</div>
+      <div class="price">—</div>
+      <div class="change">loading…</div>
+      <button onclick="removeToken('${id}')" title="Remove">Remove</button>
+    </div>
+  `).join("");
+}
+
+async function loadPrices(){
+  const msg = document.getElementById("msg");
+  if(tracked.size===0){ document.getElementById("cards").innerHTML="No tokens. Add one above."; return; }
+  try{
+    msg.textContent = "Updating…";
+    const resp = await fetch(apiUrl(tracked), {cache:"no-store"});
+    if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    for(const id of tracked){
+      const card = document.getElementById(`card-${id}`);
+      const row = data[id];
+      if(!card) continue;
+      if(!row){
+        card.querySelector(".price").textContent = "not found";
+        card.querySelector(".change").textContent = "";
+        continue;
+      }
+      const price = row.usd;
+      const chg = row.usd_24h_change || 0;
+      card.querySelector(".price").textContent = `$${fmt(price)}`;
+      const sign = chg >= 0 ? "up":"down";
+      card.querySelector(".change").innerHTML = `<span class="change ${sign}">${chg.toFixed(2)}% 24h</span>`;
+    }
+    const ts = new Date().toLocaleTimeString();
+    msg.textContent = `Last update: ${ts}`;
+  }catch(e){
+    msg.innerHTML = `<span class="error">Failed to load prices. Try again (rate limit?).</span>`;
+    console.error(e);
+  }
+}
+
+function removeToken(id){
+  tracked.delete(id);
+  document.getElementById(`card-${id}`)?.remove();
+  loadPrices();
+}
+
+function addToken(){
+  const inp = document.getElementById("customId");
+  const id = (inp.value||"").trim().toLowerCase();
+  if(!id) return;
+  if(tracked.has(id)) { inp.value=""; return; }
+  tracked.add(id);
+  renderSkeleton();
+  loadPrices();
+  inp.value="";
+}
+
+function applyInterval(){
+  const sel = document.getElementById("intervalSel");
+  const sec = parseInt(sel.value,10);
+  if(timer){ clearInterval(timer); timer=null; }
+  if(sec>0){ timer = setInterval(loadPrices, sec*1000); }
+}
+
+document.getElementById("refreshBtn").onclick = loadPrices;
+document.getElementById("addBtn").onclick = addToken;
+document.getElementById("intervalSel").onchange = applyInterval;
+
+// initial render & load
+renderSkeleton();
+applyInterval();
+loadPrices();
+</script>
+</body>
+</html>
